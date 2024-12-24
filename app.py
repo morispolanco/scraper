@@ -3,7 +3,6 @@
 import streamlit as st
 import requests
 import pandas as pd
-from bs4 import BeautifulSoup
 import time
 import re
 
@@ -56,10 +55,10 @@ def buscar_profesionales(profesion, pais, start=0):
         st.error(f"Error en la solicitud a la API: {e}")
         return []
 
-# Función para extraer información de contacto de una página web
+# Función para extraer información de contacto de una página web sin usar BeautifulSoup
 def extraer_contacto(url):
     """
-    Extrae información de contacto desde una página web.
+    Extrae información de contacto desde una página web utilizando expresiones regulares.
 
     :param url: URL de la página a procesar
     :return: Diccionario con la información de contacto
@@ -67,29 +66,26 @@ def extraer_contacto(url):
     try:
         response = requests.get(url, timeout=10)
         if response.status_code != 200:
+            st.warning(f"No se pudo acceder a {url} (Status Code: {response.status_code})")
             return {}
-        soup = BeautifulSoup(response.text, 'html.parser')
 
-        # Buscar correo electrónico
-        correo = None
-        correo_match = re.search(r'[\w\.-]+@[\w\.-]+', soup.get_text())
-        if correo_match:
-            correo = correo_match.group(0)
+        contenido = response.text
+
+        # Buscar correos electrónicos
+        correos = re.findall(r'[\w\.-]+@[\w\.-]+', contenido)
+        correo = correos[0] if correos else None
 
         # Si no hay correo, no incluimos el contacto
         if not correo:
             return {}
 
-        # Buscar teléfono
-        telefono = None
-        telefono_match = re.search(r'(\+\d{1,3}[- ]?)?\d{9,15}', soup.get_text())
-        if telefono_match:
-            telefono = telefono_match.group(0)
+        # Buscar teléfonos
+        telefonos = re.findall(r'(\+\d{1,3}[- ]?)?\d{9,15}', contenido)
+        telefono = telefonos[0] if telefonos else None
 
-        # Buscar nombre (puede variar según la estructura de la página)
-        nombre = None
-        if soup.title:
-            nombre = soup.title.string.strip()
+        # Buscar nombre (por ejemplo, título de la página)
+        titulo_match = re.search(r'<title>(.*?)</title>', contenido, re.IGNORECASE | re.DOTALL)
+        nombre = titulo_match.group(1).strip() if titulo_match else "Sin título"
 
         return {
             "Nombre": nombre,
@@ -114,7 +110,7 @@ def generar_excel(datos, nombre_archivo="profesionales.xlsx"):
     st.success(f"Archivo Excel generado: {nombre_archivo}")
     st.download_button(
         label="Descargar Excel",
-        data=df.to_csv(index=False).encode('utf-8'),
+        data=df.to_excel(index=False).encode('utf-8'),
         file_name=nombre_archivo,
         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
     )
