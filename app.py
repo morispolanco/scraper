@@ -1,124 +1,164 @@
+# app.py
+
 import streamlit as st
 import requests
 import pandas as pd
 from bs4 import BeautifulSoup
-import re
 import time
+import re
 
-# Configuración de la API de Serper
-SERPER_API_KEY = st.secrets["SERPER_API_KEY"]
-SERPER_URL = 'https://google.serper.dev/search'
-HEADERS = {
-    'X-API-KEY': SERPER_API_KEY,
-    'Content-Type': 'application/json'
-}
+# Configuración de la página
+st.set_page_config(
+    page_title="Buscador de Profesionales",
+    layout="wide",
+    initial_sidebar_state="expanded",
+)
 
-# Función para realizar una búsqueda en Serper
-def search_serper(query):
-    payload = {"q": query}
-    response = requests.post(SERPER_URL, headers=HEADERS, json=payload)
-    if response.status_code == 200:
-        return response.json()
-    else:
-        st.error(f"Error al realizar la búsqueda en Serper: {response.status_code} - {response.text}")
-        return None
+# Título de la aplicación
+st.title("Buscador de Profesionales por País y Profesión")
 
-# Función para extraer información de una URL
-def scrape_website(url):
-  try:
-    response = requests.get(url, timeout=10)
-    if response.status_code == 200:
+# Sidebar para entradas del usuario
+st.sidebar.header("Configuración de Búsqueda")
+
+# Entradas del usuario
+pais = st.sidebar.text_input("País", "España")
+profesion = st.sidebar.text_input("Profesión", "abogados")
+max_contactos = st.sidebar.number_input("Número máximo de contactos", min_value=10, max_value=1000, value=500, step=10)
+buscar = st.sidebar.button("Buscar")
+
+# Función para realizar búsquedas con la API de Serper
+def buscar_profesionales(profesion, pais, start=0):
+    """
+    Realiza una búsqueda utilizando la API de Serper.
+
+    :param profesion: Profesión a buscar (e.g., "abogados")
+    :param pais: País de interés (e.g., "España")
+    :param start: Paginación de resultados
+    :return: Lista de URLs de directorios o asociaciones
+    """
+    consulta = f"{profesion} en {pais}"
+    headers = {
+        "X-API-KEY": st.secrets["serper_api_key"],
+        "Content-Type": "application/json"
+    }
+    data = {
+        "q": consulta,
+        "start": start  # Paginación si la API lo soporta
+    }
+
+    try:
+        response = requests.post("https://google.serper.dev/search", headers=headers, json=data)
+        response.raise_for_status()
+        resultados = response.json().get("organic", [])
+        urls = [res.get("link") for res in resultados if res.get("link")]
+        return urls
+    except requests.exceptions.RequestException as e:
+        st.error(f"Error en la solicitud a la API: {e}")
+        return []
+
+# Función para extraer información de contacto de una página web
+def extraer_contacto(url):
+    """
+    Extrae información de contacto desde una página web.
+
+    :param url: URL de la página a procesar
+    :return: Diccionario con la información de contacto
+    """
+    try:
+        response = requests.get(url, timeout=10)
+        if response.status_code != 200:
+            return {}
         soup = BeautifulSoup(response.text, 'html.parser')
-        text_content = soup.get_text(separator=' ', strip=True)
-        return text_content
-    else:
-        st.error(f"Error al obtener el contenido de la URL {url}: {response.status_code}")
-        return ""
-  except requests.exceptions.RequestException as e:
-    st.error(f"Error de conexión al obtener {url}: {e}")
-    return ""
 
-# Función para extraer correos y teléfonos de un texto
-def extract_contacts(text):
-  emails = re.findall(r"[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}", text)
-  phones = re.findall(r"(\d{3}[-\.\s]??\d{3}[-\.\s]??\d{4}|\(\d{3}\)\s*\d{3}[-\.\s]??\d{4}|\d{3}[-\.\s]??\d{4})", text)
-  return emails, phones
+        # Buscar correo electrónico
+        correo = None
+        correo_match = re.search(r'[\w\.-]+@[\w\.-]+', soup.get_text())
+        if correo_match:
+            correo = correo_match.group(0)
 
-# Función principal de la aplicación
+        # Si no hay correo, no incluimos el contacto
+        if not correo:
+            return {}
+
+        # Buscar teléfono
+        telefono = None
+        telefono_match = re.search(r'(\+\d{1,3}[- ]?)?\d{9,15}', soup.get_text())
+        if telefono_match:
+            telefono = telefono_match.group(0)
+
+        # Buscar nombre (puede variar según la estructura de la página)
+        nombre = None
+        if soup.title:
+            nombre = soup.title.string.strip()
+
+        return {
+            "Nombre": nombre,
+            "Correo Electrónico": correo,
+            "Teléfono": telefono,
+            "URL": url
+        }
+    except Exception as e:
+        st.warning(f"Error al procesar {url}: {e}")
+        return {}
+
+# Función para generar el archivo Excel
+def generar_excel(datos, nombre_archivo="profesionales.xlsx"):
+    """
+    Genera un archivo Excel con los datos proporcionados.
+
+    :param datos: Lista de diccionarios con los datos de los profesionales.
+    :param nombre_archivo: Nombre del archivo Excel a generar.
+    """
+    df = pd.DataFrame(datos)
+    df.to_excel(nombre_archivo, index=False)
+    st.success(f"Archivo Excel generado: {nombre_archivo}")
+    st.download_button(
+        label="Descargar Excel",
+        data=df.to_csv(index=False).encode('utf-8'),
+        file_name=nombre_archivo,
+        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    )
+
+# Función principal para coordinar la búsqueda y extracción
 def main():
-  st.title("Buscador de Contactos Profesionales")
+    contactos = []
+    start = 0
+    resultados_por_pagina = 10  # Depende de la API de Serper
+    progreso = st.progress(0)
+    total_progress = max_contactos / resultados_por_pagina
 
-  profesion = st.text_input("Profesión a buscar (ej: Abogado, Médico, Ingeniero):")
-  pais = st.text_input("País a buscar (ej: España, México, Argentina):")
+    with st.spinner("Buscando profesionales..."):
+        while len(contactos) < max_contactos:
+            urls = buscar_profesionales(profesion, pais, start)
+            if not urls:
+                st.info("No se obtuvieron más URLs.")
+                break
 
-  if st.button("Buscar Contactos"):
-    if not profesion or not pais:
-        st.warning("Por favor, ingrese la profesión y el país.")
-        return
+            st.write(f"Procesando {len(urls)} URLs...")
+            for url in urls:
+                if len(contactos) >= max_contactos:
+                    break
+                contacto = extraer_contacto(url)
+                if contacto and contacto not in contactos:
+                    contactos.append(contacto)
+                    st.write(f"Contacto agregado: {contacto['Nombre']} - {contacto['Correo Electrónico']}")
+                time.sleep(1)  # Respetar el tiempo entre solicitudes
 
-    st.info(f"Buscando profesionales de {profesion} en {pais}... Esto puede tomar un tiempo.")
+            start += resultados_por_pagina
+            progreso.progress(min(int((start / (max_contactos / resultados_por_pagina)) * 100), 100))
+            time.sleep(2)  # Respetar el tiempo entre solicitudes de búsqueda
 
-    all_contacts = []
-    contactos_encontrados = 0
-    page = 1
+    progreso.empty()
 
-    while contactos_encontrados < 500:
-      query = f"Directorio de {profesion} {pais} página {page}"
-      st.write(f"Búsqueda: {query}")
-      search_results = search_serper(query)
+    if contactos:
+        st.success(f"Se obtuvieron {len(contactos)} contactos con correo electrónico.")
+        df = pd.DataFrame(contactos)
+        st.dataframe(df)
 
-      if search_results and "organic" in search_results:
-        for result in search_results["organic"]:
-          if contactos_encontrados >= 500:
-            break
-          url = result.get("link")
-          if url:
-              st.write(f"Extrayendo información de: {url}")
-              page_content = scrape_website(url)
-              if page_content:
-                  emails, phones = extract_contacts(page_content)
-                  for email in emails:
-                    if contactos_encontrados >= 500:
-                      break
-                    all_contacts.append({"Profesión": profesion, "País": pais, "Email": email, "Teléfono": "N/A", "Fuente": url})
-                    contactos_encontrados += 1
-                  for phone in phones:
-                    if contactos_encontrados >= 500:
-                      break
-                    all_contacts.append({"Profesión": profesion, "País": pais, "Email": "N/A", "Teléfono": phone, "Fuente": url})
-                    contactos_encontrados += 1
-              else:
-                st.warning(f"No se pudo obtener el contenido de la URL: {url}")
-          else:
-            st.warning(f"No se encontró la URL en el resultado: {result}")
-        page +=1
-      else:
-        st.warning(f"No se encontraron resultados para {query} en la página {page}. Finalizando búsqueda...")
-        break
-
-      if contactos_encontrados >= 500:
-          st.success(f"Se encontraron {contactos_encontrados} contactos. ¡Límite alcanzado!")
-          break
-      
-      time.sleep(2)  # Pausa para no sobrecargar el servidor
-
-    if all_contacts:
-      df = pd.DataFrame(all_contacts)
-      st.write("### Resultados:")
-      st.dataframe(df)
-      
-      # Descargar como Excel
-      excel_file = df.to_excel("contactos_profesionales.xlsx", index=False)
-
-      with open("contactos_profesionales.xlsx", "rb") as file:
-        st.download_button(
-            label="Descargar Excel",
-            data=file,
-            file_name="contactos_profesionales.xlsx",
-            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        )
+        generar_excel(contactos)
     else:
-      st.info("No se encontraron contactos con los criterios de búsqueda.")
-    
-if __name__ == "__main__":
+        st.warning("No se encontraron contactos con correo electrónico.")
+
+# Ejecutar la función principal cuando se apriete el botón
+if buscar:
     main()
