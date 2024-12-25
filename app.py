@@ -1,160 +1,94 @@
-# app.py
-
 import streamlit as st
 import requests
-import pandas as pd
-import time
 import re
+import pandas as pd
+from bs4 import BeautifulSoup
+from io import BytesIO
+from googlesearch import search
 
-# Configuración de la página
-st.set_page_config(
-    page_title="Buscador de Profesionales",
-    layout="wide",
-    initial_sidebar_state="expanded",
-)
-
-# Título de la aplicación
-st.title("Buscador de Profesionales por País y Profesión")
-
-# Sidebar para entradas del usuario
-st.sidebar.header("Configuración de Búsqueda")
-
-# Entradas del usuario
-pais = st.sidebar.text_input("País", "España")
-profesion = st.sidebar.text_input("Profesión", "abogados")
-max_contactos = st.sidebar.number_input("Número máximo de contactos", min_value=10, max_value=1000, value=500, step=10)
-buscar = st.sidebar.button("Buscar")
-
-# Función para realizar búsquedas con la API de Serper
-def buscar_profesionales(profesion, pais, start=0):
+def extraer_emails_de_url(url):
     """
-    Realiza una búsqueda utilizando la API de Serper.
-
-    :param profesion: Profesión a buscar (e.g., "abogados")
-    :param pais: País de interés (e.g., "España")
-    :param start: Paginación de resultados
-    :return: Lista de URLs de directorios o asociaciones
+    Dada una URL, intenta extraer emails del contenido HTML.
+    Retorna una lista con todos los emails encontrados (sin duplicados).
     """
-    consulta = f"{profesion} en {pais}"
-    headers = {
-        "X-API-KEY": st.secrets["serper_api_key"],
-        "Content-Type": "application/json"
-    }
-    data = {
-        "q": consulta,
-        "start": start  # Paginación si la API lo soporta
-    }
-
+    emails_encontrados = set()
+    
     try:
-        response = requests.post("https://google.serper.dev/search", headers=headers, json=data)
-        response.raise_for_status()
-        resultados = response.json().get("organic", [])
-        urls = [res.get("link") for res in resultados if res.get("link")]
-        return urls
-    except requests.exceptions.RequestException as e:
-        st.error(f"Error en la solicitud a la API: {e}")
-        return []
-
-# Función para extraer información de contacto de una página web sin usar BeautifulSoup
-def extraer_contacto(url):
-    """
-    Extrae información de contacto desde una página web utilizando expresiones regulares.
-
-    :param url: URL de la página a procesar
-    :return: Diccionario con la información de contacto
-    """
-    try:
-        response = requests.get(url, timeout=10)
-        if response.status_code != 200:
-            st.warning(f"No se pudo acceder a {url} (Status Code: {response.status_code})")
-            return {}
-
-        contenido = response.text
-
-        # Buscar correos electrónicos
-        correos = re.findall(r'[\w\.-]+@[\w\.-]+', contenido)
-        correo = correos[0] if correos else None
-
-        # Si no hay correo, no incluimos el contacto
-        if not correo:
-            return {}
-
-        # Buscar teléfonos
-        telefonos = re.findall(r'(\+\d{1,3}[- ]?)?\d{9,15}', contenido)
-        telefono = telefonos[0] if telefonos else None
-
-        # Buscar nombre (por ejemplo, título de la página)
-        titulo_match = re.search(r'<title>(.*?)</title>', contenido, re.IGNORECASE | re.DOTALL)
-        nombre = titulo_match.group(1).strip() if titulo_match else "Sin título"
-
-        return {
-            "Nombre": nombre,
-            "Correo Electrónico": correo,
-            "Teléfono": telefono,
-            "URL": url
+        headers = {
+            "User-Agent": (
+                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                "AppleWebKit/537.36 (KHTML, like Gecko) "
+                "Chrome/58.0.3029.110 Safari/537.36"
+            )
         }
+        respuesta = requests.get(url, headers=headers, timeout=10)
+        
+        # Si la respuesta es exitosa (código 200), parseamos
+        if respuesta.status_code == 200:
+            # Extraemos texto
+            texto = respuesta.text
+            # Regex para buscar emails
+            posibles_emails = re.findall(r'[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]+', texto)
+            for email in posibles_emails:
+                emails_encontrados.add(email)
     except Exception as e:
-        st.warning(f"Error al procesar {url}: {e}")
-        return {}
+        # Si algo falla, mostramos el error en consola.
+        print(f"Error al procesar la URL {url}: {e}")
 
-# Función para generar el archivo Excel
-def generar_excel(datos, nombre_archivo="profesionales.xlsx"):
-    """
-    Genera un archivo Excel con los datos proporcionados.
+    return list(emails_encontrados)
 
-    :param datos: Lista de diccionarios con los datos de los profesionales.
-    :param nombre_archivo: Nombre del archivo Excel a generar.
-    """
-    df = pd.DataFrame(datos)
-    df.to_excel(nombre_archivo, index=False)
-    st.success(f"Archivo Excel generado: {nombre_archivo}")
-    st.download_button(
-        label="Descargar Excel",
-        data=df.to_excel(index=False).encode('utf-8'),
-        file_name=nombre_archivo,
-        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-    )
-
-# Función principal para coordinar la búsqueda y extracción
 def main():
-    contactos = []
-    start = 0
-    resultados_por_pagina = 10  # Depende de la API de Serper
-    progreso = st.progress(0)
-    total_progress = max_contactos / resultados_por_pagina
+    st.title("Búsqueda de perfiles de LinkedIn y extracción de emails")
+    
+    # Inputs del usuario
+    profesion = st.text_input("Profesión / Cargo", value="Data Scientist")
+    pais = st.text_input("País", value="Colombia")
+    
+    # Botón para iniciar la búsqueda
+    if st.button("Buscar y extraer emails"):
+        if profesion and pais:
+            st.write("Buscando páginas de LinkedIn relacionadas...")
+            
+            # Construimos la query para Google
+            query = f"site:linkedin.com/in/ {profesion} {pais}"
+            
+            # Realizamos la búsqueda en Google (máximo 10 resultados)
+            resultados = []
+            for url in search(query, tld="com", lang="es", num=10, stop=10, pause=2):
+                resultados.append(url)
 
-    with st.spinner("Buscando profesionales..."):
-        while len(contactos) < max_contactos:
-            urls = buscar_profesionales(profesion, pais, start)
-            if not urls:
-                st.info("No se obtuvieron más URLs.")
-                break
+            st.write(f"Encontradas {len(resultados)} URL(s):")
+            for r in resultados:
+                st.write(r)
 
-            st.write(f"Procesando {len(urls)} URLs...")
-            for url in urls:
-                if len(contactos) >= max_contactos:
-                    break
-                contacto = extraer_contacto(url)
-                if contacto and contacto not in contactos:
-                    contactos.append(contacto)
-                    st.write(f"Contacto agregado: {contacto['Nombre']} - {contacto['Correo Electrónico']}")
-                time.sleep(1)  # Respetar el tiempo entre solicitudes
+            # Extraer emails de cada URL
+            todos_emails = []
+            for url in resultados:
+                emails = extraer_emails_de_url(url)
+                for e in emails:
+                    todos_emails.append({"url": url, "email": e})
 
-            start += resultados_por_pagina
-            progreso.progress(min(int((start / (max_contactos / resultados_por_pagina)) * 100), 100))
-            time.sleep(2)  # Respetar el tiempo entre solicitudes de búsqueda
+            if todos_emails:
+                st.write("Emails extraídos:")
+                df_emails = pd.DataFrame(todos_emails)
+                st.dataframe(df_emails)
 
-    progreso.empty()
+                # Generar archivo Excel en memoria
+                output = BytesIO()
+                with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
+                    df_emails.to_excel(writer, index=False, sheet_name='Emails')
+                
+                # Botón de descarga
+                st.download_button(
+                    label="Descargar Excel",
+                    data=output.getvalue(),
+                    file_name="emails_linkedin.xlsx",
+                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                )
+            else:
+                st.write("No se encontraron emails en las páginas visitadas.")
+        else:
+            st.warning("Por favor, introduce tanto la profesión como el país.")
 
-    if contactos:
-        st.success(f"Se obtuvieron {len(contactos)} contactos con correo electrónico.")
-        df = pd.DataFrame(contactos)
-        st.dataframe(df)
-
-        generar_excel(contactos)
-    else:
-        st.warning("No se encontraron contactos con correo electrónico.")
-
-# Ejecutar la función principal cuando se apriete el botón
-if buscar:
+if __name__ == "__main__":
     main()
