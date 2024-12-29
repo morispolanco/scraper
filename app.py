@@ -80,6 +80,21 @@ def buscar_correos(profesional, pais, num_emails, api_key):
     
     return pd.DataFrame()  # Retorna un DataFrame vacío en caso de error
 
+# Función para convertir el DataFrame a un archivo Excel descargable
+def convert_df_to_excel(df):
+    output = BytesIO()
+    try:
+        with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
+            df.to_excel(writer, index=False, sheet_name='Resultados')
+            writer.save()
+        processed_data = output.getvalue()
+        return processed_data
+    except ImportError:
+        st.error("La biblioteca 'xlsxwriter' no está instalada. Por favor, instala 'xlsxwriter' para habilitar la exportación a Excel.")
+    except Exception as e:
+        st.error(f"Ocurrió un error al convertir a Excel: {e}")
+    return None
+
 # Si el usuario ha enviado el formulario
 if buscar:
     # Validar el número de correos electrónicos
@@ -101,23 +116,16 @@ if buscar:
             # Mostrar los resultados en la aplicación
             st.dataframe(resultados_df)
             
-            # Función para convertir el DataFrame a un archivo Excel descargable
-            def convert_df_to_excel(df):
-                output = BytesIO()
-                with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
-                    df.to_excel(writer, index=False, sheet_name='Resultados')
-                processed_data = output.getvalue()
-                return processed_data
-            
             # Convertir el DataFrame a Excel
             excel_data = convert_df_to_excel(resultados_df)
             
-            # Botón para descargar el archivo Excel
-            st.download_button(
-                label="Descargar Resultados en Excel",
-                data=excel_data,
-                file_name='resultados.xlsx',
-                mime='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
-            )
+            if excel_data:
+                # Botón para descargar el archivo Excel
+                st.download_button(
+                    label="Descargar Resultados en Excel",
+                    data=excel_data,
+                    file_name='resultados.xlsx',
+                    mime='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+                )
         else:
             st.warning("No se encontraron resultados para la búsqueda especificada.")
