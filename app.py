@@ -13,8 +13,9 @@ Esta aplicación permite buscar correos electrónicos de profesionales específi
 **Instrucciones:**
 1. Ingresa el tipo de profesional (por ejemplo, "abogados").
 2. Ingresa el país (por ejemplo, "Guatemala").
-3. Haz clic en "Iniciar Búsqueda".
-4. Visualiza los resultados y descárgalos en formato Excel.
+3. Especifica el número de correos electrónicos que deseas obtener (de 50 a 5000).
+4. Haz clic en "Iniciar Búsqueda".
+5. Visualiza los resultados y descárgalos en formato Excel.
 """)
 
 # Formulario de entrada
@@ -25,11 +26,21 @@ with st.form(key='search_form'):
     # Entrada para el país
     pais = st.text_input("País", value="Guatemala")
     
+    # Entrada para el número de correos electrónicos
+    num_emails = st.number_input(
+        "Número de Correos Electrónicos",
+        min_value=50,
+        max_value=5000,
+        value=50,
+        step=50,
+        help="Ingresa un número entre 50 y 5000."
+    )
+    
     # Botón para iniciar la búsqueda
     buscar = st.form_submit_button(label='Iniciar Búsqueda')
 
 # Función para realizar la búsqueda utilizando la API de exa.ai
-def buscar_correos(profesional, pais, api_key):
+def buscar_correos(profesional, pais, num_emails, api_key):
     url = "https://api.exa.ai/search"
     headers = {
         "accept": "application/json",
@@ -43,7 +54,7 @@ def buscar_correos(profesional, pais, api_key):
     payload = {
         "query": query,
         "type": "auto",
-        "numResults": 50
+        "numResults": num_emails
     }
     
     try:
@@ -71,39 +82,42 @@ def buscar_correos(profesional, pais, api_key):
 
 # Si el usuario ha enviado el formulario
 if buscar:
-    # Mostrar un mensaje de carga
-    with st.spinner('Buscando correos electrónicos...'):
-        # Obtener la clave API desde los secretos de Streamlit
-        api_key = st.secrets["API_KEY"]
-        
-        # Realizar la búsqueda
-        resultados_df = buscar_correos(profesional, pais, api_key)
-    
-    # Verificar si se obtuvieron resultados
-    if not resultados_df.empty:
-        st.success("Búsqueda completada exitosamente.")
-        
-        # Mostrar los resultados en la aplicación
-        st.dataframe(resultados_df)
-        
-        # Función para convertir el DataFrame a un archivo Excel descargable
-        def convert_df_to_excel(df):
-            output = BytesIO()
-            with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
-                df.to_excel(writer, index=False, sheet_name='Resultados')
-                writer.save()
-            processed_data = output.getvalue()
-            return processed_data
-        
-        # Convertir el DataFrame a Excel
-        excel_data = convert_df_to_excel(resultados_df)
-        
-        # Botón para descargar el archivo Excel
-        st.download_button(
-            label="Descargar Resultados en Excel",
-            data=excel_data,
-            file_name='resultados.xlsx',
-            mime='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
-        )
+    # Validar el número de correos electrónicos
+    if not 50 <= num_emails <= 5000:
+        st.error("El número de correos electrónicos debe estar entre 50 y 5000.")
     else:
-        st.warning("No se encontraron resultados para la búsqueda especificada.")
+        # Mostrar un mensaje de carga
+        with st.spinner('Buscando correos electrónicos...'):
+            # Obtener la clave API desde los secretos de Streamlit
+            api_key = st.secrets["API_KEY"]
+            
+            # Realizar la búsqueda
+            resultados_df = buscar_correos(profesional, pais, num_emails, api_key)
+        
+        # Verificar si se obtuvieron resultados
+        if not resultados_df.empty:
+            st.success("Búsqueda completada exitosamente.")
+            
+            # Mostrar los resultados en la aplicación
+            st.dataframe(resultados_df)
+            
+            # Función para convertir el DataFrame a un archivo Excel descargable
+            def convert_df_to_excel(df):
+                output = BytesIO()
+                with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
+                    df.to_excel(writer, index=False, sheet_name='Resultados')
+                processed_data = output.getvalue()
+                return processed_data
+            
+            # Convertir el DataFrame a Excel
+            excel_data = convert_df_to_excel(resultados_df)
+            
+            # Botón para descargar el archivo Excel
+            st.download_button(
+                label="Descargar Resultados en Excel",
+                data=excel_data,
+                file_name='resultados.xlsx',
+                mime='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+            )
+        else:
+            st.warning("No se encontraron resultados para la búsqueda especificada.")
