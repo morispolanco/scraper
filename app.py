@@ -9,7 +9,7 @@ st.title("Buscador de Correos Electrónicos de Profesionales")
 # Descripción de la aplicación
 st.markdown("""
 Esta aplicación permite buscar correos electrónicos de profesionales específicos en un país determinado utilizando la API de [exa.ai](https://exa.ai/).
-  
+
 **Instrucciones:**
 1. Ingresa el tipo de profesional (por ejemplo, "abogados").
 2. Ingresa el país (por ejemplo, "Guatemala").
@@ -68,10 +68,37 @@ def buscar_correos(profesional, pais, num_emails, api_key):
         # Supongamos que los resultados están en 'results'
         resultados = data.get('results', [])
         
-        # Convertir los resultados a un DataFrame de pandas
-        df = pd.DataFrame(resultados)
+        # Extraer los correos electrónicos y otros campos relevantes
+        emails = []
+        otros_datos = []
         
-        return df
+        for item in resultados:
+            # Asumiendo que el correo electrónico está bajo la clave 'email'
+            email = item.get('email', None)
+            if email:
+                emails.append(email)
+            else:
+                emails.append("No disponible")
+            
+            # Puedes extraer otros datos si están disponibles
+            # Por ejemplo, nombre, posición, empresa, etc.
+            # Aquí se muestra cómo hacerlo si están presentes
+            # Otros campos pueden añadirse según la respuesta de la API
+            otros_datos.append({
+                "Nombre": item.get('name', 'No disponible'),
+                "Posición": item.get('position', 'No disponible'),
+                "Empresa": item.get('company', 'No disponible'),
+                # Añade más campos según sea necesario
+            })
+        
+        # Crear un DataFrame con los correos electrónicos y otros datos
+        df_emails = pd.DataFrame({'Emails': emails})
+        df_otros = pd.DataFrame(otros_datos)
+        
+        # Combinar los DataFrames en uno solo
+        df_final = pd.concat([df_otros, df_emails], axis=1)
+        
+        return df_final
     
     except requests.exceptions.HTTPError as http_err:
         st.error(f"Error HTTP: {http_err}")
