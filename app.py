@@ -2,6 +2,12 @@ import streamlit as st
 import requests
 import pandas as pd
 from io import BytesIO
+import re
+
+# Función para validar correos electrónicos
+def es_email_valido(email):
+    patron = r'^[\w\.-]+@[\w\.-]+\.\w+$'
+    return re.match(patron, email) is not None
 
 # Título de la aplicación
 st.title("Buscador de Correos Electrónicos de Profesionales")
@@ -65,6 +71,9 @@ def buscar_correos(profesional, pais, num_emails, api_key):
         # Procesar la respuesta JSON
         data = response.json()
         
+        # Mostrar la respuesta completa para depuración (elimina esto después)
+        # st.write("Respuesta completa de la API:", data)
+        
         # Supongamos que los resultados están en 'results'
         resultados = data.get('results', [])
         
@@ -73,22 +82,28 @@ def buscar_correos(profesional, pais, num_emails, api_key):
         otros_datos = []
         
         for item in resultados:
-            # Asumiendo que el correo electrónico está bajo la clave 'email'
-            email = item.get('email', None)
-            if email:
+            # Intentar obtener el correo electrónico dentro de 'contact'
+            contact = item.get('contact', {})
+            email = contact.get('email', None)
+            
+            # Si no se encuentra, intentar en otra clave (ejemplo: 'emails')
+            if not email:
+                # Suponiendo que 'emails' es una lista
+                emails_list = item.get('emails', [])
+                email = emails_list[0] if emails_list else None
+            
+            # Validar el correo electrónico
+            if email and es_email_valido(email):
                 emails.append(email)
             else:
                 emails.append("No disponible")
             
-            # Puedes extraer otros datos si están disponibles
-            # Por ejemplo, nombre, posición, empresa, etc.
-            # Aquí se muestra cómo hacerlo si están presentes
-            # Otros campos pueden añadirse según la respuesta de la API
+            # Extraer otros datos si están disponibles
             otros_datos.append({
                 "Nombre": item.get('name', 'No disponible'),
                 "Posición": item.get('position', 'No disponible'),
                 "Empresa": item.get('company', 'No disponible'),
-                # Añade más campos según sea necesario
+                # Añade más campos según la respuesta de la API
             })
         
         # Crear un DataFrame con los correos electrónicos y otros datos
