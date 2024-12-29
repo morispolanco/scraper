@@ -1,94 +1,109 @@
 import streamlit as st
 import requests
-import re
 import pandas as pd
-from bs4 import BeautifulSoup
 from io import BytesIO
-from googlesearch import search
 
-def extraer_emails_de_url(url):
-    """
-    Dada una URL, intenta extraer emails del contenido HTML.
-    Retorna una lista con todos los emails encontrados (sin duplicados).
-    """
-    emails_encontrados = set()
+# Título de la aplicación
+st.title("Buscador de Correos Electrónicos de Profesionales")
+
+# Descripción de la aplicación
+st.markdown("""
+Esta aplicación permite buscar correos electrónicos de profesionales específicos en un país determinado utilizando la API de [exa.ai](https://exa.ai/).
+  
+**Instrucciones:**
+1. Ingresa el tipo de profesional (por ejemplo, "abogados").
+2. Ingresa el país (por ejemplo, "Guatemala").
+3. Haz clic en "Iniciar Búsqueda".
+4. Visualiza los resultados y descárgalos en formato Excel.
+""")
+
+# Formulario de entrada
+with st.form(key='search_form'):
+    # Entrada para el tipo de profesional
+    profesional = st.text_input("Tipo de Profesional", value="abogados")
     
-    try:
-        headers = {
-            "User-Agent": (
-                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-                "AppleWebKit/537.36 (KHTML, like Gecko) "
-                "Chrome/58.0.3029.110 Safari/537.36"
-            )
-        }
-        respuesta = requests.get(url, headers=headers, timeout=10)
-        
-        # Si la respuesta es exitosa (código 200), parseamos
-        if respuesta.status_code == 200:
-            # Extraemos texto
-            texto = respuesta.text
-            # Regex para buscar emails
-            posibles_emails = re.findall(r'[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]+', texto)
-            for email in posibles_emails:
-                emails_encontrados.add(email)
-    except Exception as e:
-        # Si algo falla, mostramos el error en consola.
-        print(f"Error al procesar la URL {url}: {e}")
-
-    return list(emails_encontrados)
-
-def main():
-    st.title("Búsqueda de perfiles de LinkedIn y extracción de emails")
-    
-    # Inputs del usuario
-    profesion = st.text_input("Profesión / Cargo", value="Data Scientist")
-    pais = st.text_input("País", value="Colombia")
+    # Entrada para el país
+    pais = st.text_input("País", value="Guatemala")
     
     # Botón para iniciar la búsqueda
-    if st.button("Buscar y extraer emails"):
-        if profesion and pais:
-            st.write("Buscando páginas de LinkedIn relacionadas...")
-            
-            # Construimos la query para Google
-            query = f"site:linkedin.com/in/ {profesion} {pais}"
-            
-            # Realizamos la búsqueda en Google (máximo 10 resultados)
-            resultados = []
-            for url in search(query, tld="com", lang="es", num=10, stop=10, pause=2):
-                resultados.append(url)
+    buscar = st.form_submit_button(label='Iniciar Búsqueda')
 
-            st.write(f"Encontradas {len(resultados)} URL(s):")
-            for r in resultados:
-                st.write(r)
+# Función para realizar la búsqueda utilizando la API de exa.ai
+def buscar_correos(profesional, pais, api_key):
+    url = "https://api.exa.ai/search"
+    headers = {
+        "accept": "application/json",
+        "content-type": "application/json",
+        "x-api-key": api_key
+    }
+    
+    # Construcción de la consulta
+    query = f"Emails de {profesional} de {pais} en LinkedIn"
+    
+    payload = {
+        "query": query,
+        "type": "auto",
+        "numResults": 50
+    }
+    
+    try:
+        # Realizar la solicitud POST a la API
+        response = requests.post(url, headers=headers, json=payload)
+        response.raise_for_status()  # Lanza una excepción para códigos de estado 4xx/5xx
+        
+        # Procesar la respuesta JSON
+        data = response.json()
+        
+        # Supongamos que los resultados están en 'results'
+        resultados = data.get('results', [])
+        
+        # Convertir los resultados a un DataFrame de pandas
+        df = pd.DataFrame(resultados)
+        
+        return df
+    
+    except requests.exceptions.HTTPError as http_err:
+        st.error(f"Error HTTP: {http_err}")
+    except Exception as err:
+        st.error(f"Ocurrió un error: {err}")
+    
+    return pd.DataFrame()  # Retorna un DataFrame vacío en caso de error
 
-            # Extraer emails de cada URL
-            todos_emails = []
-            for url in resultados:
-                emails = extraer_emails_de_url(url)
-                for e in emails:
-                    todos_emails.append({"url": url, "email": e})
-
-            if todos_emails:
-                st.write("Emails extraídos:")
-                df_emails = pd.DataFrame(todos_emails)
-                st.dataframe(df_emails)
-
-                # Generar archivo Excel en memoria
-                output = BytesIO()
-                with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
-                    df_emails.to_excel(writer, index=False, sheet_name='Emails')
-                
-                # Botón de descarga
-                st.download_button(
-                    label="Descargar Excel",
-                    data=output.getvalue(),
-                    file_name="emails_linkedin.xlsx",
-                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-                )
-            else:
-                st.write("No se encontraron emails en las páginas visitadas.")
-        else:
-            st.warning("Por favor, introduce tanto la profesión como el país.")
-
-if __name__ == "__main__":
-    main()
+# Si el usuario ha enviado el formulario
+if buscar:
+    # Mostrar un mensaje de carga
+    with st.spinner('Buscando correos electrónicos...'):
+        # Obtener la clave API desde los secretos de Streamlit
+        api_key = st.secrets["API_KEY"]
+        
+        # Realizar la búsqueda
+        resultados_df = buscar_correos(profesional, pais, api_key)
+    
+    # Verificar si se obtuvieron resultados
+    if not resultados_df.empty:
+        st.success("Búsqueda completada exitosamente.")
+        
+        # Mostrar los resultados en la aplicación
+        st.dataframe(resultados_df)
+        
+        # Función para convertir el DataFrame a un archivo Excel descargable
+        def convert_df_to_excel(df):
+            output = BytesIO()
+            with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
+                df.to_excel(writer, index=False, sheet_name='Resultados')
+                writer.save()
+            processed_data = output.getvalue()
+            return processed_data
+        
+        # Convertir el DataFrame a Excel
+        excel_data = convert_df_to_excel(resultados_df)
+        
+        # Botón para descargar el archivo Excel
+        st.download_button(
+            label="Descargar Resultados en Excel",
+            data=excel_data,
+            file_name='resultados.xlsx',
+            mime='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+        )
+    else:
+        st.warning("No se encontraron resultados para la búsqueda especificada.")
