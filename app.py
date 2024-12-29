@@ -71,32 +71,40 @@ def buscar_correos(profesional, pais, num_emails, api_key):
         # Procesar la respuesta JSON
         data = response.json()
         
-        # Mostrar la respuesta completa para depuración (elimina esto después)
-        # st.write("Respuesta completa de la API:", data)
+        # **Temporal:** Mostrar la respuesta completa para depuración
+        st.subheader("Respuesta completa de la API")
+        st.json(data)
         
         # Supongamos que los resultados están en 'results'
         resultados = data.get('results', [])
+        
+        if not resultados:
+            st.warning("La API no ha devuelto resultados en la clave 'results'. Verifica la consulta.")
         
         # Extraer los correos electrónicos y otros campos relevantes
         emails = []
         otros_datos = []
         
-        for item in resultados:
+        for idx, item in enumerate(resultados, start=1):
             # Intentar obtener el correo electrónico dentro de 'contact'
             contact = item.get('contact', {})
             email = contact.get('email', None)
             
-            # Si no se encuentra, intentar en otra clave (ejemplo: 'emails')
+            # Si no se encuentra, intentar en 'emails' (lista)
             if not email:
-                # Suponiendo que 'emails' es una lista
                 emails_list = item.get('emails', [])
-                email = emails_list[0] if emails_list else None
+                if isinstance(emails_list, list) and len(emails_list) > 0:
+                    email = emails_list[0]
+                    st.warning(f"Correo electrónico no encontrado en 'contact' para el resultado {idx}. Usando el primero de 'emails'.")
+                else:
+                    email = None
             
             # Validar el correo electrónico
             if email and es_email_valido(email):
                 emails.append(email)
             else:
                 emails.append("No disponible")
+                st.warning(f"Correo electrónico no disponible o inválido para el resultado {idx}.")
             
             # Extraer otros datos si están disponibles
             otros_datos.append({
